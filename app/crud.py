@@ -31,6 +31,11 @@ def create_product(db: Session, product: schemas.ProductBase, owner_id: int):
 def get_all_products(db: Session):
     return db.query(models.Product).all()
 
+# ADD THIS NEW FUNCTION
+def get_product(db: Session, product_id: int):
+    """Get a single product by its ID."""
+    return db.query(models.Product).filter(models.Product.id == product_id).first()
+
 def get_product_details(db: Session, product_ids: list[int]):
     if not product_ids:
         return []

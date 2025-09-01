@@ -26,6 +26,9 @@ print(f"Model will be saved/loaded from: {MODEL_PATH}")
 # Initialize / Load Model
 # -----------------------------
 def initialize_model(db, force_retrain=False):
+    """
+    Initialize or retrain LightFM model and save it as a .pkl file.
+    """
     global GLOBAL_DATASET, GLOBAL_MODEL, GLOBAL_ITEM_FEATURES_MATRIX
 
     if not force_retrain and os.path.exists(MODEL_PATH):
@@ -37,17 +40,19 @@ def initialize_model(db, force_retrain=False):
         except Exception as e:
             print("Failed to load model, retraining:", e)
 
-    # Train new model
+    # Step 1: Build dataset
     dataset, interactions_matrix, item_features_matrix = build_dataset(db)
     print(f"Step 1: Dataset ready with {interactions_matrix.shape[0]} users and {interactions_matrix.shape[1]} items")
-    
-    model = train_model(interactions_matrix, item_features_matrix)  # Ensure it returns the model
 
+    # Step 2: Train model
+    model = train_model(interactions_matrix, item_features_matrix)
+
+    # Update globals
     GLOBAL_DATASET = dataset
     GLOBAL_MODEL = model
     GLOBAL_ITEM_FEATURES_MATRIX = item_features_matrix
 
-    # Save model
+    # Step 3: Save model as .pkl
     try:
         print(f"Step 3: Saving model to {MODEL_PATH}...")
         with open(MODEL_PATH, "wb") as f:
@@ -55,7 +60,6 @@ def initialize_model(db, force_retrain=False):
         print("Step 4: Model saved successfully!")
     except Exception as e:
         print("Failed to save model:", e)
-
 
 
 # -----------------------------
@@ -104,12 +108,13 @@ def build_dataset(db):
 # -----------------------------
 # Train model
 # -----------------------------
-def train_model(interactions_matrix, item_features_matrix):
+def train_model(interactions_matrix, item_features_matrix, epochs=10):
     print("Step 2: Training model...")
-    model = LightFM(loss='warp')
-    model.fit(interactions_matrix, item_features=item_features_matrix, epochs=10, num_threads=1)
+    model = LightFM(loss='logistic') 
+    model.fit(interactions_matrix, item_features=item_features_matrix, epochs=epochs, num_threads=1)
     print("Step 2: Model training completed.")
     return model
+
 
 
 # -----------------------------
@@ -130,7 +135,7 @@ def recommend_content_based(liked_ids, db, top_k=4):
         return []
 
     liked_vec = X[liked_indices].mean(axis=0)
-    sim_matrix = cosine_similarity(liked_vec, X).flatten()
+    sim_matrix = cosine_similarity(liked_vec.A, X).flatten()  # Add .A to convert matrix to array
     ranked_idx = np.argsort(-sim_matrix)
 
     ranked_ids = [id_list[i] for i in ranked_idx if id_list[i] not in liked_ids]
