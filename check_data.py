@@ -1,16 +1,31 @@
-import sqlite3
-import os
+from sqlalchemy import create_engine, text
 
-db_path = "app.db"
-print("Using database:", db_path)
+# Replace with your actual DB connection string
+DB_URL = "mysql+pymysql://root:kBRYrXFeTaeYHzwlDaKktTVCxJLhYaCL@monorail.proxy.rlwy.net:38812/thriftko"
 
-conn = sqlite3.connect(db_path)
-cursor = conn.cursor()
+engine = create_engine(DB_URL)
 
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-print("Tables:", cursor.fetchall())
+with engine.connect() as conn:
+    print("Connected to database!")
 
-cursor.execute("SELECT * FROM users;")
-print(cursor.fetchall())
+    # List all tables
+    tables = conn.execute(text("SHOW TABLES")).fetchall()
+    print("Tables:", tables)
 
-conn.close()
+    # Sample data from USERS table
+    users = conn.execute(text("SELECT * FROM USERS LIMIT 5")).fetchall()
+    print("Users (sample):")
+    for u in users:
+        print(u)
+
+    # Sample data from PRODUCT table
+    products = conn.execute(text("SELECT * FROM PRODUCT LIMIT 5")).fetchall()
+    print("Products (sample):")
+    for p in products:
+        print(p)
+
+    # Sample data from SWIPES table
+    swipes = conn.execute(text("SELECT * FROM SWIPES LIMIT 5")).fetchall()
+    print("Swipes (sample):")
+    for s in swipes:
+        print(s)

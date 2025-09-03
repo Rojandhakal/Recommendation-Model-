@@ -1,19 +1,38 @@
-from fastapi.testclient import TestClient
-from app.main import app
+# test_recommend.py
+import os
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from app.service.recommender import initialize_model, get_recommendations
 
-client = TestClient(app)
+# -----------------------
+# Database connection
+# -----------------------
+# Replace with your actual MySQL credentials from DataGrip
+DB_URL = "mysql+pymysql://root:kBRYrXFeTaeYHzwlDaKktTVCxJLhYaCL@monorail.proxy.rlwy.net:38812/thriftko"
+engine = create_engine(DB_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+db = SessionLocal()
 
-def test_recommendations(user_id: int):
-    response = client.get(f"/recommend/{user_id}")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"Top {len(data)} recommendations for User {user_id}:")
-        for p in data:
-            print(
-                f"ID: {p['id']}, Name: {p['name']}, Price: {p['price']}, "
-                f"Brand: {p['brand']}, Size: {p['size']}, Color: {p['color']}, Category: {p['category']}"
-            )
+# -----------------------
+# Initialize the model
+# -----------------------
+initialize_model(db)  # loads or trains the LightFM model
+
+# -----------------------
+# Test recommendations
+# -----------------------
+def test_recommendations(user_guid: str, db):
+    recs = get_recommendations(user_guid, db=db)
+    if recs:
+        print(f"Top {len(recs)} recommendations for User {user_guid}:")
+        for r in recs:
+            print(r)
     else:
-        print(f"No recommendations found. Status code: {response.status_code}, Detail: {response.json()}")
+        print(f"No recommendations found for User {user_guid}.")
 
-test_recommendations(user_id=1)
+# -----------------------
+# Example usage
+# -----------------------
+if __name__ == "__main__":
+    user_guid = "00357f46-38f2-4a88-b5db-a4f066201423"  # Replace with a real user GUID
+    test_recommendations(user_guid, db)
