@@ -97,7 +97,7 @@ def train_model(interactions_matrix, item_features_matrix, epochs=10):
     return model
 
 
-def initialize_model(db, force_retrain=True):
+def initialize_model(db, force_retrain=False):
     global GLOBAL_DATASET, GLOBAL_MODEL, GLOBAL_ITEM_FEATURES_MATRIX
 
     if not force_retrain and os.path.exists(MODEL_PATH):
