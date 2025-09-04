@@ -5,7 +5,7 @@ def main():
     db = SessionLocal()
     print("Starting training process...")
 
-    recommender.initialize_model(db, force_retrain=False)
+    recommender.initialize_model(db, force_retrain=True)
 
     print("Training pipeline completed successfully!")
 

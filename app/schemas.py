@@ -8,21 +8,18 @@ class SwipeDirection(str, Enum):
     dislike = "dislike"
     cart = "cart"
 
-
 class SwipeBase(BaseModel):
-    product_id: int
+    product_guid: str
     direction: SwipeDirection
 
 
 class Swipe(SwipeBase):
-    id: int
-    user_id: int
+    user_guid: str
 
     class Config:
         from_attributes = True
 
 
-# ---------- New Schemas ----------
 
 class UserResponse(BaseModel):
     user_guid: str
@@ -36,6 +33,7 @@ class ProductResponse(BaseModel):
     description: Optional[str] = None
     brand: Optional[str] = None
     size: Optional[str] = None
+    price: Optional[float] = None   
 
 
 class RecommendationResponse(BaseModel):

@@ -1,34 +1,34 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.schemas import Product
+from app.schemas import ProductResponse
 from app.database import get_db
 
 router = APIRouter(
     prefix="/products",
-    tags=["Products"]
+    tags=["products"]
 )
 
-@router.get("/", response_model=list[Product])
+@router.get("/", response_model=list[ProductResponse])
 def list_products(db: Session = Depends(get_db)):
     rows = db.execute(text(
-        "SELECT id, name, category, subcategory, color, gender, brand, size, description, `condition`, 0 as owner_id "
-        "FROM PRODUCTS"
+        """
+        SELECT PRODUCT_GUID, COLOR, CATEGORY_SLUG, SUB_CATEGORY_ID, DESCRIPTION, BRAND, SIZE
+        FROM PRODUCT
+        WHERE ACTIVE=1 AND DELETED_TIME IS NULL
+        """
     )).fetchall()
 
     return [
         {
-            "id": r[0],
-            "name": r[1],
+            "product_guid": r[0],
+            "color": r[1],
             "category": r[2],
             "subcategory": r[3],
-            "color": r[4],
-            "gender": r[5],
-            "brand": r[6],
-            "size": r[7],
-            "description": r[8],
-            "condition": r[9],
-            "owner_id": r[10]
+            "description": r[4],
+            "brand": r[5],
+            "size": r[6],
+            "price": r[7] 
         }
         for r in rows
     ]
