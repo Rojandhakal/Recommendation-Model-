@@ -13,7 +13,7 @@ router = APIRouter(
 def list_products(db: Session = Depends(get_db)):
     rows = db.execute(text(
         """
-        SELECT PRODUCT_GUID, COLOR, CATEGORY_SLUG, SUB_CATEGORY_ID, DESCRIPTION, BRAND, SIZE
+        SELECT PRODUCT_GUID, COLOR, CATEGORY_SLUG, SUB_CATEGORY_ID, DESCRIPTION, BRAND, SIZEE, PRICE
         FROM PRODUCT
         WHERE ACTIVE=1 AND DELETED_TIME IS NULL
         """
