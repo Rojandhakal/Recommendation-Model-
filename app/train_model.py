@@ -13,9 +13,6 @@ def run_training_pipeline() -> None:
         recommendation_engine.train_model()
         logger.info("Model trained successfully")
         
-        model_dir = os.path.dirname(settings.MODEL_PATH)
-        os.makedirs(model_dir, exist_ok=True)
-        
         recommendation_engine.save_model(settings.MODEL_PATH)
         logger.info(f"Model saved successfully at {settings.MODEL_PATH}")
         

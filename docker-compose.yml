@@ -8,12 +8,11 @@ services:
     environment:
       - DATABASE_URL=mysql+pymysql://root:kBRYrXFeTaeYHzwlDaKktTVCxJLhYaCL@monorail.proxy.rlwy.net:38812/thriftko
       - REDIS_URL=redis://redis:6379/0
-      - MODEL_PATH=/app/service/lightfm_model.pkl
+      - MODEL_PATH=/app/app/service/lightfm_model.pkl  
     depends_on:
       - redis
     volumes:
-      - ./service:/app/service
-      - ./app:/app/app
+      - .:/app  
 
   redis:
     image: redis:7

@@ -30,12 +30,16 @@ def get_user_recommendations(
             num_recommendations=num_recommendations
         )
         
+        logger.info(f"Raw recommendations: {recommendations}")
+        
         algorithm = "lightfm"
         
         if not recommendations:
             logger.info(f"No recommendations found for user {user_id}, returning popular items")
             recommendations = recommendation_engine._get_popular_items(db, num_recommendations)
             algorithm = "popular_fallback"
+        
+        logger.info(f"Processed recommendations: {recommendations}")
         
         response = UserRecommendationsResponse(
             user_id=user_id,
@@ -51,6 +55,9 @@ def get_user_recommendations(
         raise
     except Exception as e:
         logger.error(f"Recommendation generation failed for user {user_id}: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500, 
             detail="Failed to generate recommendations"

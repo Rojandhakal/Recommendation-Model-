@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from lightfm import LightFM
 from lightfm.data import Dataset
 from sqlalchemy.orm import Session, joinedload
-from app.db.models import User, Product, ViewCount, Wishlist, WishlistItem
+from app.db.models import User, Product, ViewCount, Wishlist, WishlistItem, Swipe, SwipeDirection
 from app.core.logging import get_logger
 from app.core.config import get_settings
 from app.db.database import SessionLocal
@@ -61,7 +61,7 @@ class LightFMRecommendationEngine:
         logger.info("Preparing training data...")
 
         users = db.query(User).filter(User.STATUS == "ACTIVE").all()
-        
+ 
         products = db.query(Product).filter(
             Product.ACTIVE == True,
             Product.DELETED_TIME.is_(None)
@@ -71,8 +71,8 @@ class LightFMRecommendationEngine:
             raise ValueError("Need at least 2 users and 2 products to train the model")
 
         self.dataset = Dataset()
-        user_ids = [str(user.USER_GUID) for user in users]  
-        item_ids = [str(product.PRODUCT_GUID) for product in products]  
+        user_ids = [str(user.USER_GUID) for user in users]
+        item_ids = [str(product.PRODUCT_GUID) for product in products]
 
         self.dataset.fit(user_ids, item_ids)
 
@@ -82,7 +82,7 @@ class LightFMRecommendationEngine:
         self.reverse_item_map = {idx: iid for iid, idx in self.item_id_map.items()}
 
         interactions = self._build_interactions(db)
-        
+ 
         if interactions:
             self.interactions_matrix, _ = self.dataset.build_interactions(interactions)
         else:
@@ -94,33 +94,52 @@ class LightFMRecommendationEngine:
     def _build_interactions(self, db: Session) -> List[tuple]:
         """Build interaction tuples from database data."""
         interactions = []
-        
+ 
         try:
             view_counts = db.query(ViewCount).all()
             for vc in view_counts:
-                user_id_str = str(vc.USER_ID)
-                product_id_str = str(vc.PRODUCT_ID) 
+                user_id_str = str(vc.user_id) 
+                product_id_str = str(vc.product_id) 
                 if user_id_str in self.user_id_map and product_id_str in self.item_id_map:
-                    weight = min(vc.COUNT / 10.0, 2.0) + 1.0 
+                    weight = min(vc.count / 10.0, 2.0) + 1.0 
                     interactions.append((user_id_str, product_id_str, weight))
+            logger.info(f"Processed {len(view_counts)} view counts")
         except Exception as e:
             logger.warning(f"Error processing view counts: {e}")
-        
+ 
         try:
             wishlist_items = (db.query(WishlistItem)
                             .join(Wishlist)
                             .options(joinedload(WishlistItem.wishlist))
                             .all())
-            
+ 
             for wi in wishlist_items:
-                user_id_str = str(wi.wishlist.USER_GUID) 
-                product_id_str = str(wi.PRODUCT_ID)  
-                if (user_id_str in self.user_id_map and 
+                user_id_str = str(wi.wishlist.user_id)  
+                product_id_str = str(wi.product_id)  
+                if (user_id_str in self.user_id_map and
                     product_id_str in self.item_id_map):
                     interactions.append((user_id_str, product_id_str, 3.0))
+            logger.info(f"Processed {len(wishlist_items)} wishlist items")
         except Exception as e:
             logger.warning(f"Error processing wishlist items: {e}")
-        
+ 
+        try:
+            swipes = db.query(Swipe).all()
+            for swipe in swipes:
+                user_id_str = str(swipe.user_guid)
+                product_id_str = str(swipe.product_guid)
+                if user_id_str in self.user_id_map and product_id_str in self.item_id_map:
+                    if swipe.direction == SwipeDirection.LIKE:
+                        weight = 2.5
+                    elif swipe.direction == SwipeDirection.CART:
+                        weight = 4.0 
+                    else:  
+                        weight = 0.1  
+                    interactions.append((user_id_str, product_id_str, weight))
+            logger.info(f"Processed {len(swipes)} swipes")
+        except Exception as e:
+            logger.warning(f"Error processing swipes: {e}")
+ 
         return interactions
 
     def prepare_features(self, db: Session):
@@ -131,12 +150,27 @@ class LightFMRecommendationEngine:
             item_features = self._build_item_features(db)
             user_features = self._build_user_features(db)
 
+            all_item_features = set()
+            for _, features in item_features:
+                all_item_features.update(features)
+            
+            all_user_features = set()
+            for _, features in user_features:
+                all_user_features.update(features)
+
+            if all_item_features or all_user_features:
+                self.dataset.fit_partial(
+                    item_features=list(all_item_features),
+                    user_features=list(all_user_features)
+                )
+
             if item_features:
                 self.item_features = self.dataset.build_item_features(item_features)
             if user_features:
                 self.user_features = self.dataset.build_user_features(user_features)
 
             logger.info(f"Built features for {len(item_features)} items and {len(user_features)} users")
+            logger.info(f"Item features: {len(all_item_features)}, User features: {len(all_user_features)}")
         except Exception as e:
             logger.warning(f"Feature preparation failed: {e}")
             self.item_features = None
@@ -145,47 +179,47 @@ class LightFMRecommendationEngine:
     def _build_item_features(self, db: Session) -> List[tuple]:
         """Build item features from product data."""
         item_features = []
-        
+ 
         products = db.query(Product).filter(
             Product.ACTIVE == True,
             Product.DELETED_TIME.is_(None)
         ).all()
 
         for product in products:
-            product_id_str = str(product.PRODUCT_GUID)  
+            product_id_str = str(product.PRODUCT_GUID)
             if product_id_str in self.item_id_map:
                 features = []
-                
-                if product.CATEGORY_SLUG:  
+ 
+                if product.CATEGORY_SLUG:
                     features.append(f"category:{product.CATEGORY_SLUG.lower()}")
-                if product.BRAND:  
+                if product.BRAND:
                     features.append(f"brand:{product.BRAND.lower()}")
-                if product.GENDER:  
+                if product.GENDER:
                     features.append(f"gender:{product.GENDER.lower()}")
-                if product.PRICE:  
+                if product.PRICE:
                     features.append(f"price_range:{self._get_price_range(product.PRICE)}")
 
                 if features:
                     item_features.append((product_id_str, features))
-        
+ 
         return item_features
 
     def _build_user_features(self, db: Session) -> List[tuple]:
         """Build user features from user activity data."""
         user_features = []
-        
+ 
         users = (db.query(User)
                 .filter(User.STATUS == "ACTIVE")
                 .options(joinedload(User.view_counts))
                 .all())
 
         for user in users:
-            user_id_str = str(user.USER_GUID)  
+            user_id_str = str(user.USER_GUID)
             if user_id_str in self.user_id_map:
                 features = []
-                
-                total_views = sum(vc.COUNT for vc in user.view_counts)  
-                
+ 
+                total_views = sum(vc.count for vc in user.view_counts) 
+ 
                 if total_views > 50:
                     features.append("activity:high")
                 elif total_views > 10:
@@ -193,9 +227,23 @@ class LightFMRecommendationEngine:
                 else:
                     features.append("activity:low")
 
+                try:
+                    user_swipes = db.query(Swipe).filter(Swipe.user_guid == user_id_str).all()
+                    like_count = sum(1 for s in user_swipes if s.direction == SwipeDirection.LIKE)
+                    dislike_count = sum(1 for s in user_swipes if s.direction == SwipeDirection.DISLIKE)
+                    
+                    if like_count > dislike_count * 2:
+                        features.append("preference:positive")
+                    elif dislike_count > like_count * 2:
+                        features.append("preference:negative")
+                    else:
+                        features.append("preference:balanced")
+                except Exception as e:
+                    logger.warning(f"Error processing user swipes for features: {e}")
+
                 if features:
                     user_features.append((user_id_str, features))
-        
+ 
         return user_features
 
     def train_model(self):
@@ -230,7 +278,7 @@ class LightFMRecommendationEngine:
         """Get recommendations for a user."""
         redis_client = self._get_redis()
         cache_key = f"recommendations:{user_id}:{num_recommendations}"
-        
+    
         if redis_client:
             try:
                 cached = redis_client.get(cache_key)
@@ -245,24 +293,28 @@ class LightFMRecommendationEngine:
             except Exception as e:
                 logger.error(f"Model training failed: {e}")
                 with self._get_db_session() as db:
-                    return self._get_popular_items(db, num_recommendations)
+                    result = self._get_popular_items(db, num_recommendations)
+                    logger.info(f"Using popular items fallback: {result}")
+                    return result
 
         with self._get_db_session() as db:
             if user_id not in self.user_id_map:
                 result = self._get_popular_items(db, num_recommendations)
+                logger.info(f"User not in map, using popular items: {result}")
             else:
                 result = self._generate_recommendations(db, user_id, num_recommendations)
+                logger.info(f"Generated recommendations: {result}")
 
             if redis_client and result:
                 try:
                     redis_client.setex(
-                        cache_key, 
-                        settings.RECOMMENDATION_CACHE_TTL, 
+                        cache_key,
+                        settings.RECOMMENDATION_CACHE_TTL,
                         pickle.dumps(result).decode('latin-1')
                     )
                 except Exception as e:
                     logger.warning(f"Cache storage failed: {e}")
-            
+    
             return result
 
     def _generate_recommendations(self, db: Session, user_id: str, num_recommendations: int) -> List[Dict[str, Any]]:
@@ -292,15 +344,17 @@ class LightFMRecommendationEngine:
                     product = db.query(Product).filter(Product.PRODUCT_GUID == product_id).first()
                     if product and product.ACTIVE and product.DELETED_TIME is None:
                         recommendations.append({
-                            'product_id': product_id,
-                            'score': float(scores[idx]),
-                            'name': product.PRODUCT_NAME,  
-                            'price': product.PRICE, 
-                            'category': product.CATEGORY_SLUG 
-                        })
+                            'PRODUCT_GUID': product_id,
+                            'PRODUCT_NAME': product.PRODUCT_NAME, 
+                            'DESCRIPTION': product.DESCRIPTION,  
+                            'PRICE': product.PRICE,  
+                            'IMAGE_PATH': product.IMAGE_PATH,  
+                            'BRAND': product.BRAND,  
+                            'CATEGORY_SLUG': product.CATEGORY_SLUG  
+                            })
 
             return recommendations or self._get_popular_items(db, num_recommendations)
-        
+ 
         except Exception as e:
             logger.error(f"Recommendation generation failed: {e}")
             return self._get_popular_items(db, num_recommendations)
@@ -310,35 +364,52 @@ class LightFMRecommendationEngine:
         user_interactions = set()
 
         try:
-            viewed_products = db.query(ViewCount.PRODUCT_ID).filter(
-                ViewCount.USER_ID == user_id
+            viewed_products = db.query(ViewCount.product_id).filter(
+                ViewCount.user_id == user_id  
             ).all()
             user_interactions.update(str(vc[0]) for vc in viewed_products)
         except Exception as e:
             logger.warning(f"Error getting viewed products: {e}")
 
         try:
-            wishlist = db.query(Wishlist).filter(Wishlist.USER_GUID == user_id).first()
+            wishlist = db.query(Wishlist).filter(Wishlist.user_id == user_id).first()  
             if wishlist:
-                wishlist_items = db.query(WishlistItem.PRODUCT_ID).filter(
-                    WishlistItem.WISHLIST_ID == wishlist.WISHLIST_GUID 
+                wishlist_items = db.query(WishlistItem.product_id).filter(
+                    WishlistItem.wishlist_id == wishlist.id 
                 ).all()
                 user_interactions.update(str(wi[0]) for wi in wishlist_items)
         except Exception as e:
             logger.warning(f"Error getting wishlist products: {e}")
 
+        try:
+            swipe_products = db.query(Swipe.product_guid).filter(
+                Swipe.user_guid == user_id
+            ).all()
+            user_interactions.update(str(sp[0]) for sp in swipe_products)
+        except Exception as e:
+            logger.warning(f"Error getting swiped products: {e}")
+
         return user_interactions
 
-    def _get_popular_items(self, db: Session, limit: int = 10) -> List[Product]:
-        """Get popular items based on wishlist count"""
+    def _get_popular_items(self, db: Session, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get popular items based on wishlist count and swipes"""
         try:
             popular_items = db.query(Product).filter(
-                Product.ACTIVE == True
+                Product.ACTIVE == True,
+                Product.DELETED_TIME.is_(None)
             ).order_by(
-                Product.WISHLIST_COUNT.desc() 
+                Product.WISHLIST_COUNT.desc()
             ).limit(limit).all()
-            
-            return popular_items
+    
+            return [{
+                'PRODUCT_GUID': str(item.PRODUCT_GUID),  
+                'PRODUCT_NAME': item.PRODUCT_NAME,       
+                'DESCRIPTION': item.DESCRIPTION,        
+                'PRICE': item.PRICE,                     
+                'IMAGE_PATH': item.IMAGE_PATH,          
+                'BRAND': item.BRAND,                     
+                'CATEGORY_SLUG': item.CATEGORY_SLUG     
+            } for item in popular_items]
         except Exception as e:
             logger.error(f"Failed to get popular items: {e}")
             return []
@@ -350,7 +421,11 @@ class LightFMRecommendationEngine:
 
         try:
             import os
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            from pathlib import Path
+            
+            directory = Path(filepath).parent
+            if directory:
+                directory.mkdir(parents=True, exist_ok=True)
             
             model_data = {
                 'model': self.model,
@@ -380,8 +455,8 @@ class LightFMRecommendationEngine:
             with open(filepath, 'rb') as f:
                 data = pickle.load(f)
             
-            required_keys = ['model', 'dataset', 'user_id_map', 'item_id_map', 
-                           'reverse_user_map', 'reverse_item_map']
+            required_keys = ['model', 'dataset', 'user_id_map', 'item_id_map',
+                        'reverse_user_map', 'reverse_item_map']
             
             if not all(key in data for key in required_keys):
                 raise ValueError("Invalid model file format")
