@@ -1,63 +1,76 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from app.database import get_db
-from app.service import recommender
+from app.db.database import get_db
+from app.db.models import User
+from app.service.recommender import recommendation_engine
+from app.schemas import UserRecommendationsResponse
+from app.core.logging import get_logger
+from datetime import datetime
 
-router = APIRouter(
-    prefix="/recommend",
-    tags=["recommend"]
-)
+router = APIRouter(prefix="/recommendations", tags=["recommendations"])
+logger = get_logger("recommendations_api")
 
-@router.on_event("startup")
-def load_model_on_startup():
-    from app.database import SessionLocal
-    db = SessionLocal()
-    recommender.initialize_model(db)
-    db.close()
+def verify_user_exists(db: Session, user_id: str):
+    user = db.query(User).filter(User.USER_GUID == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
-def get_product_details(db: Session, product_guid: str):
-    row = db.execute(text(
-        """
-        SELECT product_guid, product_name, user_guid, category_slug, sub_category_id, color,
-               description, active
-        FROM product
-        WHERE product_guid = :pid AND deleted_time IS NULL
-        """
-    ), {"pid": product_guid}).fetchone()
+@router.get("/{user_id}", response_model=UserRecommendationsResponse)
+def get_user_recommendations(
+    user_id: str,
+    num_recommendations: int = Query(10, ge=1, le=50, description="Number of recommendations to return"),
+    db: Session = Depends(get_db)
+):
+    try:
+        verify_user_exists(db, user_id)
+        
+        recommendations = recommendation_engine.get_recommendations(
+            user_id=user_id,
+            num_recommendations=num_recommendations
+        )
+        
+        algorithm = "lightfm"
+        
+        if not recommendations:
+            logger.info(f"No recommendations found for user {user_id}, returning popular items")
+            recommendations = recommendation_engine._get_popular_items(db, num_recommendations)
+            algorithm = "popular_fallback"
+        
+        response = UserRecommendationsResponse(
+            user_id=user_id,
+            recommendations=recommendations,
+            algorithm=algorithm,
+            generated_at=datetime.now()
+        )
+        
+        logger.info(f"Generated {len(recommendations)} recommendations for user {user_id}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Recommendation generation failed for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to generate recommendations"
+        )
 
-    if not row:
-        return None
-
-    return {
-        "product_guid": row[0],
-        "name": row[1],
-        "seller": row[2],
-        "category": row[3],
-        "subcategory": row[4],
-        "color": row[5],
-        "description": row[6],
-        "condition": row[7]
-    }
-
-@router.get("/{user_guid}")
-def get_recommendations(user_guid: str, db: Session = Depends(get_db)):
-    if not recommender.GLOBAL_MODEL:
-        recommender.initialize_model(db)
-
-    recommended_ids = recommender.recommend_products(user_guid, num_recs=10, db=db)
-
-    if len(recommended_ids) < 10:
-        exclude_ids = set(recommended_ids)
-        additional_ids = recommender.recommend_random(db, exclude_ids=list(exclude_ids), top_k=10-len(recommended_ids))
-        recommended_ids.extend(additional_ids)
-
-    if not recommended_ids:
-        raise HTTPException(status_code=404, detail="No recommendations found for this user.")
-
-    response = [get_product_details(db, pid) for pid in recommended_ids if get_product_details(db, pid)]
-
-    return {
-        "user_guid": user_guid,
-        "recommendations": response
-    }
+@router.post("/train-model")
+def train_recommendation_model():
+    try:
+        logger.info("Manual model training triggered")
+        recommendation_engine.train_model()
+        
+        from app.core.config import get_settings
+        settings = get_settings()
+        recommendation_engine.save_model(settings.MODEL_PATH)
+        
+        return {
+            "message": "Model trained and saved successfully",
+            "model_trained": recommendation_engine.is_trained
+        }
+        
+    except Exception as e:
+        logger.error(f"Model training failed: {e}")
+        raise HTTPException(status_code=500, detail="Model training failed")
